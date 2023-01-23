@@ -95,7 +95,7 @@ class Link():
         form (str): denote if the state is dephased / depolarized Bell state
         rng: random generator to determine if entanglement generation is successful
     """
-    def __init__(self, beta=1, p_g=1, form="dephased", fid_raw=1, seed=0):
+    def __init__(self, beta=1, p_g=1, fid_raw=1, seed=0, form="dephased"):
         assert 0 <= fid_raw <= 1, "Raw fidelity must be between 0 and 1."
         self.fid_raw = fid_raw
         
@@ -211,7 +211,7 @@ class Link():
 
 
 # global simulation parameters
-NUM_TRIALS = 10  
+NUM_TRIALS = 1000  
 MEMO_SIZE = 5  # number of available quantum memories on one elementary link
 MEMO_Q_FACTOR = 1  # memory quality factor, no greater than 1
 GEN_HARDWARE_PROB = 1  # hardware success probability for entanglement generation, no greter than 1
@@ -219,6 +219,10 @@ RAW_FID = 1  # raw fidelity upon successful entanglement generation
 SWAP_PROB = 1  # entanglement swapping success probability, no greter than 1
 GATE_PROB = 1  # 2-qubit gate successs probability, no greter than 1
 MEAS_PROB = 1  # 1-qubit measurement successs probability, no greter than 1
+# SIM_SEED = 0  # seed for rng in simulation
+STATE_FORM = "dephased"
+BUFFER_TIME = 20  # buffer time
+OP_IMPERFECT = False  # if include operation imperfection
 
 
 """Simulation time scheme
@@ -255,87 +259,91 @@ def run_sim(t_buffer, p_s, left_links, right_links, op_imperfect=False, p_gate=-
     
     while t < t_buffer + 1:
         # perform purification if multiple links are already available (by the end of last time unit)
-        # first invoke fidelity decay
+        for link in left_ready_links:
+            assert link.t_gen != -1, "Ready left link must be really generated."
+        for link in right_ready_links:
+            assert link.t_gen != -1, "Ready right link must be really generated."
+        
         if len(left_ready_links) > 1:
+            # first invoke fidelity decay if multiple (>1) links are ready because the fidelities of states as input to purification has decayed since their generation
             for link in left_ready_links:
                 link.fid_decay(t)
-                
+            # there can be 2 or more ready links
+            # if there are more than 2, the only possibility is that 2 or more links are generated during last time step
+            left_links_old = []  # link not generated during last time step
+            for link in left_ready_links:
+                if link.t_gen < t-1:
+                    left_links_old.append(link)
+            assert len(left_links_old) <= 1, "There must be at most one left ready link generated earlier than last time step."
+
+            left_links_new = []
+            for link in left_ready_links:
+                if link.t_gen == t-1:
+                    left_links_new.append(link)
+            assert len(left_links_new) + len(left_links_old) == len(left_ready_links), "Total number of left ready links incompatible."
+
+            # then first choose one of the last generated links to get purified with the old link, and secondly successively use remaining new links to purify until atmost one ready link is left
+            # note the possibility of purification failure, after each purification attempt the ready links list need update
+            while len(left_ready_links) > 1:
+                left_link_new = left_links_new[0]
+                if len(left_links_old) > 0:
+                    left_link_old = left_links_old[0]
+                    left_link_new.purify_with(left_link_old, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
+                    left_ready_links.remove(left_link_old)  # remove old link
+                    left_links_old = []  # clear after purifying new link
+                    if left_link_new.t_gen == -1:
+                        # if purification failed, remove the new link as well
+                        left_links_new.remove(left_link_new)
+                        left_ready_links.remove(left_link_new)
+                else:
+                    left_link_new_2 = left_links_new[1]
+                    left_link_new.purify_with(left_link_new_2, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
+                    # remove the second new link
+                    left_ready_links.remove(left_link_new_2)
+                    left_links_new.remove(left_link_new_2)
+                    if left_link_new.t_gen == -1:
+                        # if purification failed, remove the new link as well
+                        left_links_new.remove(left_link_new)
+                        left_ready_links.remove(left_link_new)
+
+        # do the above again for right links
         if len(right_ready_links) > 1:
             for link in right_ready_links:
                 link.fid_decay(t)
         
-        # there can be 2 or more ready links
-        # if there are more than 2, the only possibility is that 2 or more links are generated during last time step
-        left_links_old = []  # link not generated during last time step
-        for link in left_ready_links:
-            if link.t_gen < t-1:
-                left_links_old.append(link)
-        assert len(left_links_old) == 1, "There must be at most one left ready link generated earlier than last time step."
+            right_links_old = []  # link not generated during last time step
+            for link in right_ready_links:
+                if link.t_gen < t-1:
+                    right_links_old.append(link)
+            assert len(right_links_old) <= 1, "There must be at most one right ready link generated earlier than last time step."
 
-        left_links_new = []
-        for link in left_ready_links:
-            if link.t_gen == t-1:
-                left_links_new.append(link)
-        assert len(left_links_new) + len(left_links_old) == len(left_ready_links), "Total number of left ready links incompatible."
+            right_links_new = []
+            for link in right_ready_links:
+                if link.t_gen == t-1:
+                    right_links_new.append(link)
+            assert len(right_links_new) + len(right_links_old) == len(right_ready_links), "Total number of right ready links incompatible."
 
-        right_links_old = []  # link not generated during last time step
-        for link in right_ready_links:
-            if link.t_gen < t-1:
-                right_links_old.append(link)
-        assert len(right_links_old) == 1, "There must be at most one right ready link generated earlier than last time step."
-
-        right_links_new = []
-        for link in right_ready_links:
-            if link.t_gen == t-1:
-                right_links_new.append(link)
-        assert len(right_links_new) + len(right_links_old) == len(right_ready_links), "Total number of right ready links incompatible."
-
-        # then first choose one of the last generated links to get purified with the old link, and secondly successively use remaining new links to purify until atmost one ready link is left
-        # note the possibility of purification failure, after each purification attempt the ready links list need update
-        while len(left_ready_links) > 1:
-            left_link_new = left_links_new[0]
-            if len(left_links_old) > 0:
-                left_link_old = left_links_old[0]
-                left_link_new.purify_with(left_link_old, op_imperfect, p_gate, eta_meas)
-                left_ready_links.remove(left_link_old)  # remove old link
-                left_links_old = []  # clear after purifying new link
-                if left_link_new.t_gen == -1:
-                    # if purification failed, remove the new link as well
-                    left_links_new.remove(left_link_new)
-                    left_ready_links.remove(left_link_new)
-            else:
-                left_link_new_2 = left_links_new[1]
-                left_link_new.purify_with(left_link_new_2, op_imperfect, p_gate, eta_meas)
-                # remove the second new link
-                left_ready_links.remove(left_link_new_2)
-                left_links_new.remove(left_link_new_2)
-                if left_link_new.t_gen == -1:
-                    # if purification failed, remove the new link as well
-                    left_links_new.remove(left_link_new)
-                    left_ready_links.remove(left_link_new)
-
-        # do the above again for right link
-        while len(right_ready_links) > 1:
-            right_link_new = right_links_new[0]
-            if len(right_links_old) > 0:
-                right_link_old = right_links_old[0]
-                right_link_new.purify_with(right_link_old, op_imperfect, p_gate, eta_meas)
-                right_ready_links.remove(right_link_old)  # remove old link
-                right_links_old = []  # clear after purifying new link
-                if right_link_new.t_gen == -1:
-                    # if purification failed, remove the new link as well
-                    right_links_new.remove(right_link_new)
-                    right_ready_links.remove(right_link_new)
-            else:
-                right_link_new_2 = right_links_new[1]
-                right_link_new.purify_with(right_link_new_2, op_imperfect, p_gate, eta_meas)
-                # remove the second new link
-                right_ready_links.remove(right_link_new_2)
-                right_links_new.remove(right_link_new_2)
-                if right_link_new.t_gen == -1:
-                    # if purification failed, remove the new link as well
-                    right_links_new.remove(right_link_new)
-                    right_ready_links.remove(right_link_new)
+            while len(right_ready_links) > 1:
+                right_link_new = right_links_new[0]
+                if len(right_links_old) > 0:
+                    right_link_old = right_links_old[0]
+                    right_link_new.purify_with(right_link_old, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
+                    right_ready_links.remove(right_link_old)  # remove old link
+                    right_links_old = []  # clear after purifying new link
+                    if right_link_new.t_gen == -1:
+                        # if purification failed, remove the new link as well
+                        right_links_new.remove(right_link_new)
+                        right_ready_links.remove(right_link_new)
+                else:
+                    right_link_new_2 = right_links_new[1]
+                    right_link_new.purify_with(right_link_new_2, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
+                    # remove the second new link
+                    right_ready_links.remove(right_link_new_2)
+                    right_links_new.remove(right_link_new_2)
+                    if right_link_new.t_gen == -1:
+                        # if purification failed, remove the new link as well
+                        right_links_new.remove(right_link_new)
+                        right_ready_links.remove(right_link_new)
         
         # invoke ent_gen if link not established
         if t < t_buffer:  #last time step (t = t_buffer) is only for finishing final purifications if still multiple links available, will not generate entanglement
@@ -358,9 +366,36 @@ def run_sim(t_buffer, p_s, left_links, right_links, op_imperfect=False, p_gate=-
     if len(left_ready_links) ==  1 and len(right_ready_links) == 1:
         left_link_final = left_ready_links[0]
         right_link_final = right_ready_links[0]
-        fid_dist = left_link_final.swap_with(right_link_final, p_s, op_imperfect, p_gate, eta_meas)
+        fid_dist = left_link_final.swap_with(right_link_final, p_s, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
     else:
         fid_dist = -1  # swapping cannot be performed due to lack of ready link
 
     # in the end return the value of distributed fidelity for one single cycle of repeater, will be used to study performance statistics
     return fid_dist
+
+
+"""run simulation"""
+fid_res = []  # list of distributed states' fidelity over all trials as result
+
+tick = time.time()
+for trial in range(NUM_TRIALS):
+    # set up links 
+    seed_start = MEMO_SIZE * 2 * trial  # seed for rng of links
+    left_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+i, form=STATE_FORM) for i in range(MEMO_SIZE)]
+    right_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+MEMO_SIZE+i, form=STATE_FORM) for i in range(MEMO_SIZE)]
+
+    # call the main simulation function
+    fid_dist = run_sim(BUFFER_TIME, SWAP_PROB, left_links, right_links, op_imperfect=OP_IMPERFECT, p_gate=GATE_PROB, eta_meas=MEAS_PROB)  # fidelity of distributed state's fidelity in this trial
+    fid_res.append(fid_dist)
+
+assert len(fid_res) == NUM_TRIALS, "The number of results should be equal to the number of simulation trials."
+
+sim_time = time.time() - tick
+print(f"Time taken for {NUM_TRIALS} trials of repeater with {BUFFER_TIME} buffer time and {MEMO_SIZE} available memories: {(sim_time)*10**3:.03f}ms")
+
+
+
+
+
+
+
