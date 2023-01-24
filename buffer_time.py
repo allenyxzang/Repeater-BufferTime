@@ -91,7 +91,7 @@ class Link():
     Attributes:
         fid_raw (float): raw fidelity upon generation
         beta (float): memory quality factor
-        p_g (float): entanglement generation hardware success probability, including photon loss
+        p_g (float): entanglement generation success probability, including photon loss
         form (str): denote if the state is dephased / depolarized Bell state
         rng: random generator to determine if entanglement generation is successful
     """
@@ -107,6 +107,7 @@ class Link():
         
         assert 0 <= p_g <= 1, "Entanglement generation hardware success probability must be between 0 and 1."  # arg p_s does not include photon loss
         self.p_g = p_g * 0.37  # consider 20km optical fiber for entanglement generation
+        # self.p_g = p_g
         
         self.rng = default_rng(seed)
 
@@ -116,7 +117,7 @@ class Link():
         
     def ent_gen(self, t):
         """method for entanglement generation."""
-        assert self.fid == -1 and self.t_gen == -1, "Entangled link has been established, should not invoke entanglement generation method."
+        assert self.fid == -1 and self.t_gen == -1 and self.t_now == -1, "Entangled link has been established, should not invoke entanglement generation method."
         if self.rng.random() <= self.p_g:
             self.fid = self.fid_raw
             self.t_gen = t  # t is in units of tau (elementary link 1-cc time)
@@ -125,7 +126,7 @@ class Link():
     def fid_decay(self, t):
         """method for memory decoherence-induced fidelity decay."""
         # t is simulation time in units of tau (elementary link 1-cc time)
-        t_dec = t - self.t_now  # duration between now and last time link fidelity was updated
+        t_dec = t - self.t_now  # duration between now and last time when link fidelity was updated
         if self.form == "dephased":
             fid_new = self.fid * (1 + 2*self.beta**t_dec) / 3 + (1 - self.beta**t_dec) / 6
         elif self.form == "werner":
@@ -179,7 +180,7 @@ class Link():
         assert self.form == link.form, "Current simulation only supports swapping of Bell states in same form, either 'dephased' or 'werner'."
         f1 = self.fid
         f2 = link.fid
-        if self.rng.random() <= p_s:
+        if self.rng.random() > p_s:
             # after failed swapping two links are reset
             self.reset()
             link.reset()
@@ -204,7 +205,7 @@ class Link():
             return fid_new
         
     def reset(self):
-        """method to reset entanglement link upon failed purification / swapping."""
+        """method to reset entanglement link upon failed purification / swapping or destructive measurement."""
         self.fid = -1
         self.t_gen = -1
         self.t_now = -1
@@ -212,7 +213,7 @@ class Link():
 
 # global simulation parameters
 NUM_TRIALS = 1000  
-MEMO_SIZE = 5  # number of available quantum memories on one elementary link
+MEMO_SIZE = 2  # number of available quantum memories on one elementary link
 MEMO_Q_FACTOR = 1  # memory quality factor, no greater than 1
 GEN_HARDWARE_PROB = 1  # hardware success probability for entanglement generation, no greter than 1
 RAW_FID = 1  # raw fidelity upon successful entanglement generation
@@ -221,7 +222,7 @@ GATE_PROB = 1  # 2-qubit gate successs probability, no greter than 1
 MEAS_PROB = 1  # 1-qubit measurement successs probability, no greter than 1
 # SIM_SEED = 0  # seed for rng in simulation
 STATE_FORM = "dephased"
-BUFFER_TIME = 20  # buffer time
+BUFFER_TIME = 5  # buffer time
 OP_IMPERFECT = False  # if include operation imperfection
 
 
