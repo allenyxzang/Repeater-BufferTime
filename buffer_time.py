@@ -83,6 +83,12 @@ def puri_p_w_ip(f1, f2, eta, p):
     
     return prob
 
+def rains_bound(f):
+    """Rains bound of distillable entanglement for Bell diagonal states."""
+    de = 1 + f * np.log2(f) + (1-f) * np.log2(1-f)
+
+    return de
+
 
 """entanglement link class"""
 class Link():
@@ -212,18 +218,19 @@ class Link():
 
 
 # global simulation parameters
-NUM_TRIALS = 1000  
-MEMO_SIZE = 2  # number of available quantum memories on one elementary link
-MEMO_Q_FACTOR = 1  # memory quality factor, no greater than 1
-GEN_HARDWARE_PROB = 1  # hardware success probability for entanglement generation, no greter than 1
+NUM_TRIALS = 10000
+MEMO_SIZE = 6  # maximal number of available quantum memories on one elementary link
+MEMO_Q_FACTOR = 0.998  # memory quality factor, no greater than 1
+GEN_HARDWARE_PROB = 0.3  # hardware success probability for entanglement generation, no greter than 1
 RAW_FID = 1  # raw fidelity upon successful entanglement generation
-SWAP_PROB = 1  # entanglement swapping success probability, no greter than 1
+SWAP_PROB = 0.5  # entanglement swapping success probability, no greter than 1
 GATE_PROB = 1  # 2-qubit gate successs probability, no greter than 1
 MEAS_PROB = 1  # 1-qubit measurement successs probability, no greter than 1
 # SIM_SEED = 0  # seed for rng in simulation
 STATE_FORM = "dephased"
-BUFFER_TIME = 5  # buffer time
+BUFFER_TIME = 40  # maximal buffer time
 OP_IMPERFECT = False  # if include operation imperfection
+ENT_GEN_TIME = 1e-3  # time required for one attempt of entanglement generation, in s
 
 
 """Simulation time scheme
@@ -367,6 +374,9 @@ def run_sim(t_buffer, p_s, left_links, right_links, op_imperfect=False, p_gate=-
     if len(left_ready_links) ==  1 and len(right_ready_links) == 1:
         left_link_final = left_ready_links[0]
         right_link_final = right_ready_links[0]
+        # perform final fidelity decay before swapping
+        left_link_final.fid_decay(t_buffer+1)
+        right_link_final.fid_decay(t_buffer+1)
         fid_dist = left_link_final.swap_with(right_link_final, p_s, op_imperfect=op_imperfect, p=p_gate, eta=eta_meas)
     else:
         fid_dist = -1  # swapping cannot be performed due to lack of ready link
@@ -376,6 +386,7 @@ def run_sim(t_buffer, p_s, left_links, right_links, op_imperfect=False, p_gate=-
 
 
 """run simulation"""
+"""
 fid_res = []  # list of distributed states' fidelity over all trials as result
 
 tick = time.time()
@@ -393,6 +404,68 @@ assert len(fid_res) == NUM_TRIALS, "The number of results should be equal to the
 
 sim_time = time.time() - tick
 print(f"Time taken for {NUM_TRIALS} trials of repeater with {BUFFER_TIME} buffer time and {MEMO_SIZE} available memories: {(sim_time)*10**3:.03f}ms")
+"""
+
+
+"""plotting routine"""
+plt.rc('font', size=10)
+plt.rc('axes', titlesize=18)
+plt.rc('axes', labelsize=15)
+plt.rc('xtick', labelsize=10)
+plt.rc('ytick', labelsize=10)
+plt.rc('legend', fontsize=15)
+
+plt.rcParams['axes.titley'] = 1.05
+plt.rcParams['axes.titlepad'] = 0
+
+fig = plt.figure(figsize=(8, 6))
+
+
+"""demonstration of avg rate vs varying buffer time"""
+plt.title("average rate v.s. buffer time")
+plt.xlabel("buffer time (in $\mathrm{s}$)")
+plt.ylabel("average rate (in $\mathrm{s}^{-1}$)")
+
+memo_num_list = np.arange(1, MEMO_SIZE, 1, dtype=int)  # varying number of available quantum memories
+t_buffer_list = np.arange(1, BUFFER_TIME, 1, dtype=int)  # varying buffer time
+for memo_size in memo_num_list:
+    rate_list = []  # initialization of list of rate vs varying buffer time for a certian memory number
+    for t_buffer in t_buffer_list:
+        fid_res = []  # list of distributed states' fidelity over all trials as result
+
+        tick = time.time()
+        for trial in range(NUM_TRIALS):
+            # set up links 
+            seed_start = memo_size * 2 * trial  # seed for rng of links
+            left_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+i, form=STATE_FORM) for i in range(memo_size)]
+            right_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+memo_size+i, form=STATE_FORM) for i in range(memo_size)]
+
+            # call the main simulation function
+            fid_dist = run_sim(t_buffer, SWAP_PROB, left_links, right_links, op_imperfect=OP_IMPERFECT, p_gate=GATE_PROB, eta_meas=MEAS_PROB)  # fidelity of distributed state's fidelity in this trial
+            fid_res.append(fid_dist)
+
+        assert len(fid_res) == NUM_TRIALS, "The number of results should be equal to the number of simulation trials."
+
+        sim_time = time.time() - tick
+        print(f"Time taken for {NUM_TRIALS} trials of repeater with {t_buffer} buffer time and {memo_size} available memories: {(sim_time)*10**3:.03f}ms")
+
+        # calculate average rate for this specific choice of memory number and buffer time 
+        p_succ = sum(fid >= 0 for fid in fid_res) / len(fid_res)  # success probability
+        if p_succ == 0:
+            rate = 0
+        else:
+            fid_avg = sum(fid for fid in fid_res if fid >= 0) / sum(fid >= 0 for fid in fid_res)  # average fidelity of distributed state
+            dist_ent = rains_bound(fid_avg)  # distillable entanglement upper bound of average distributed state from Rains bound
+            buffer_time = t_buffer * ENT_GEN_TIME  # buffer time in s
+            rate = p_succ * dist_ent / buffer_time  # average rate
+
+        rate_list.append(rate)
+
+    plt.plot(t_buffer_list, rate_list, label='$M={}$'.format(memo_size))
+plt.legend()
+    
+"""demonstration of optimal rate vs memory number"""
+# rate_opt_list = []  # initialization of list optimal rate for different memory number
 
 
 
