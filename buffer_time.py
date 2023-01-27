@@ -85,7 +85,10 @@ def puri_p_w_ip(f1, f2, eta, p):
 
 def rains_bound(f):
     """Rains bound of distillable entanglement for Bell diagonal states."""
-    de = 1 + f * np.log2(f) + (1-f) * np.log2(1-f)
+    if f >= 0.5:
+        de = 1 + f * np.log2(f) + (1-f) * np.log2(1-f)
+    else:
+        de = 0  # require fidelity greater than 0.5
 
     return de
 
