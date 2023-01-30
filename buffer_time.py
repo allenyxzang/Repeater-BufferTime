@@ -16,6 +16,7 @@ Probability distribution of distributed entangled state will be calculated.
 
 import numpy as np
 from numpy.random import default_rng
+from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
 import time
 
@@ -85,10 +86,7 @@ def puri_p_w_ip(f1, f2, eta, p):
 
 def rains_bound(f):
     """Rains bound of distillable entanglement for Bell diagonal states."""
-    if f >= 0.5:
-        de = 1 + f * np.log2(f) + (1-f) * np.log2(1-f)
-    else:
-        de = 0  # require fidelity greater than 0.5
+    de = 1 + f * np.log2(f) + (1-f) * np.log2(1-f)
 
     return de
 
@@ -221,17 +219,16 @@ class Link():
 
 
 # global simulation parameters
-NUM_TRIALS = 10000
+NUM_TRIALS = 100000
 MEMO_SIZE = 6  # maximal number of available quantum memories on one elementary link
 MEMO_Q_FACTOR = 0.998  # memory quality factor, no greater than 1
-GEN_HARDWARE_PROB = 0.3  # hardware success probability for entanglement generation, no greter than 1
+GEN_HARDWARE_PROB = 0.1  # hardware success probability for entanglement generation, no greter than 1
 RAW_FID = 1  # raw fidelity upon successful entanglement generation
 SWAP_PROB = 0.5  # entanglement swapping success probability, no greter than 1
-GATE_PROB = 1  # 2-qubit gate successs probability, no greter than 1
-MEAS_PROB = 1  # 1-qubit measurement successs probability, no greter than 1
-# SIM_SEED = 0  # seed for rng in simulation
-STATE_FORM = "dephased"
-BUFFER_TIME = 40  # maximal buffer time
+GATE_PROB = 0.9  # 2-qubit gate successs probability, no greter than 1
+MEAS_PROB = 0.9  # 1-qubit measurement successs probability, no greter than 1
+STATE_FORM = "werner"
+BUFFER_TIME = 30  # maximal buffer time
 OP_IMPERFECT = False  # if include operation imperfection
 ENT_GEN_TIME = 1e-3  # time required for one attempt of entanglement generation, in s
 
@@ -388,7 +385,7 @@ def run_sim(t_buffer, p_s, left_links, right_links, op_imperfect=False, p_gate=-
     return fid_dist
 
 
-"""run simulation"""
+"""test run simulation"""
 """
 fid_res = []  # list of distributed states' fidelity over all trials as result
 
@@ -422,15 +419,27 @@ plt.rcParams['axes.titley'] = 1.05
 plt.rcParams['axes.titlepad'] = 0
 
 fig = plt.figure(figsize=(8, 6))
+fig2 = plt.figure(figsize=(8, 6))
 
 
-"""demonstration of avg rate vs varying buffer time"""
-plt.title("average rate v.s. buffer time")
-plt.xlabel("buffer time (in $\mathrm{s}$)")
-plt.ylabel("average rate (in $\mathrm{s}^{-1}$)")
+"""result visualization"""
+# plt.title("average rate v.s. buffer time")
+# plt.xlabel("buffer time (in $\mathrm{ms}$)")
+# plt.ylabel("average rate (in $\mathrm{s}^{-1}$)")
+
+ax = fig.add_subplot(111)  # for visualization of both optimal rate and optimized buffer time in one figure
+ax.set_xlabel("memory number")
+ax.set_ylabel("entanglement rate (in $\mathrm{s}^{-1}$)")
+ax2 = ax.twinx()
+ax2.set_ylabel("time (in $\mathrm{ms}$)")
+
+rate_opt_list = []  # list initialization for optimal rate vs different memory number
+rate_opt_per_memo_list = []  # list initialization for optimal rate per memory vs different memory number
+t_buffer_opt_list = []  # list initialization for optimal buffer time vs different memory number
 
 memo_num_list = np.arange(1, MEMO_SIZE, 1, dtype=int)  # varying number of available quantum memories
 t_buffer_list = np.arange(1, BUFFER_TIME, 1, dtype=int)  # varying buffer time
+
 for memo_size in memo_num_list:
     rate_list = []  # initialization of list of rate vs varying buffer time for a certian memory number
     for t_buffer in t_buffer_list:
@@ -458,18 +467,69 @@ for memo_size in memo_num_list:
             rate = 0
         else:
             fid_avg = sum(fid for fid in fid_res if fid >= 0) / sum(fid >= 0 for fid in fid_res)  # average fidelity of distributed state
-            dist_ent = rains_bound(fid_avg)  # distillable entanglement upper bound of average distributed state from Rains bound
-            buffer_time = t_buffer * ENT_GEN_TIME  # buffer time in s
-            rate = p_succ * dist_ent / buffer_time  # average rate
+            if fid_avg < 0.5:
+                rate = 0
+            else: 
+                dist_ent = rains_bound(fid_avg)  # distillable entanglement upper bound of average distributed state from Rains bound
+                buffer_time = t_buffer * ENT_GEN_TIME  # buffer time in s
+                rate = p_succ * dist_ent / buffer_time  # average rate
 
         rate_list.append(rate)
 
-    plt.plot(t_buffer_list, rate_list, label='$M={}$'.format(memo_size))
-plt.legend()
-    
-"""demonstration of optimal rate vs memory number"""
-# rate_opt_list = []  # initialization of list optimal rate for different memory number
+    rate_opt = max(rate_list)  # maximal entanglement rate
+    rate_opt_per_memo = rate_opt / memo_size  # maximal entanglement rate per memory
+    rate_opt_list.append(rate_opt)
+    rate_opt_per_memo_list.append(rate_opt_per_memo)
+    t_buffer_opt = np.argmax(np.array(rate_list)) + 1  # buffer time that maximizes rate, i.e. optimized buffer time  # note that np.argmax() only counts the first occurrence
+    t_buffer_opt_list.append(t_buffer_opt)
 
+#     plt.plot(t_buffer_list*ENT_GEN_TIME, rate_list, label='$M={}$'.format(memo_size))
+# plt.legend()
+
+print(t_buffer_opt_list)  # print out optimized buffer time for plotting of probability distribution of fidelity of distributed entanglement
+ax.plot(memo_num_list, rate_opt_list, label='rate')
+ax.plot(memo_num_list, rate_opt_per_memo_list, label='rate per memo')
+ax2.plot(memo_num_list, t_buffer_opt_list, '--g', label='buffer time')
+ax.legend(loc=0)
+ax2.legend(loc=0)
+
+# plt.show()
+
+
+# plot fidelity probability distribution (density plot with Gaussian kernel)
+ax3 = fig2.add_subplot(111)  # for visualization of fidelity probability distribution
+ax3.set_xlabel("fidelity")
+ax3.set_xlim(0.5, 1)
+ax3.set_ylabel("density")
+for idx, memo_size in enumerate(memo_num_list):
+    opt_buffer_time = t_buffer_opt_list[idx]  # optimized buffer time corresponding to memory size
+    fid_res = []  # list of distributed states' fidelity over all trials as result
+
+    tick = time.time()
+    for trial in range(NUM_TRIALS):
+        # set up links 
+        seed_start = memo_size * 2 * trial  # seed for rng of links
+        left_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+i, form=STATE_FORM) for i in range(memo_size)]
+        right_links = [Link(beta=MEMO_Q_FACTOR, p_g=GEN_HARDWARE_PROB, fid_raw=RAW_FID, seed=seed_start+memo_size+i, form=STATE_FORM) for i in range(memo_size)]
+
+        # call the main simulation function
+        fid_dist = run_sim(opt_buffer_time, SWAP_PROB, left_links, right_links, op_imperfect=OP_IMPERFECT, p_gate=GATE_PROB, eta_meas=MEAS_PROB)  # fidelity of distributed state's fidelity in this trial
+        fid_res.append(fid_dist)
+
+    assert len(fid_res) == NUM_TRIALS, "The number of results should be equal to the number of simulation trials."
+
+    sim_time = time.time() - tick
+    print(f"Time taken for {NUM_TRIALS} trials of repeater with {opt_buffer_time} buffer time and {memo_size} available memories: {(sim_time)*10**3:.03f}ms")
+
+    fid_succ = np.array([fid for fid in fid_res if fid >= 0])  # list of fidelities of successfully distributed entangled pair
+    density = gaussian_kde(fid_succ)
+    fid_list = np.linspace(0, 1, num=100)
+
+    ax3.plot(fid_list, density(fid_list), label='$M={}$'.format(memo_size))
+
+ax3.legend()
+
+plt.show()
 
 
 
